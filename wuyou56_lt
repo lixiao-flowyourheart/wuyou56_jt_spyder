@@ -1,0 +1,171 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Feb 15 15:22:28 2019
+
+@author: HLL
+"""
+
+import requests
+from requests.exceptions import RequestException
+import re
+import json
+import time
+import random
+from multiprocessing import Pool
+from multiprocessing import Manager
+import functools
+import pandas as pd
+from sqlmail import mysql,basePath,sendMail
+import os
+
+def spiderPage(url):
+    if url is None:
+        return None
+
+    try:
+        print('抓取网页源码')
+#        proxies = {'https': 'https://183.129.207.74:14823','http': 'http://118.190.95.35:9001'}
+        user_agent = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/53.0.2785.104 Safari/537.36 Core/1.53.4295.400'
+        #cookie='ta_lsq=%5B%22power+bank%22%5D; _ID_autocomplete_=4e5667c9c1f446c480b3aba266c11311; _gcl_au=1.1.1939900340.1537405863; __auc=2ce154d4165f487c56e77baad4b; cto_lwid=02b48cbc-4349-4db8-984f-b6a4f77f88a1; _ga=GA1.2.1353239790.1537405864; scs=%7B%22t%22%3A1%7D; _gid=GA1.2.262957584.1537844726; lang=en; current-currency=IDR; _SID_Tokopedia_=C1qQ2s5bihc5ZgAuLEOx3IvNDxpnI-DasKgAAs0G-Ob8tYuhhI7vFYmwxpFTnBaaIK0SP0ayBAJAlXzNy8Id-vKC7K6iFQbRyCgYB0DET3gvPL75j2jhVRUwbsJAEB8o; fe_discovery_experiments=%7B%220%22%3A%7B%22exp_middle_row_ads%22%3A%7B%22name%22%3A%22exp_middle_row_ads%22%2C%22selected%22%3A%22topads-current%22%7D%7D%2C%22undefined%22%3A%7B%22exp_middle_row_ads%22%3A%7B%22name%22%3A%22exp_middle_row_ads%22%2C%22selected%22%3A%22topads-current%22%7D%7D%7D; __asc=dd66d59616613a6f329791bf42f; ins-gaSSId=15cdaf56-0e36-408c-797d-cb0bf09e4643_1537931606; _BID_TOKOPEDIA_=9fd059d91b0cb447d9c5e72e71b6cb29; ins-panel=1; insdrSV=77; state=eyJyZWYiOiJodHRwczovL3d3dy50b2tvcGVkaWEuY29tL3NlYXJjaD9zdD1wcm9kdWN0XHUwMDI2cT1wb3dlciUyMGJhbmtcdTAwMjZzYz02NVx1MDAyNnNvdXJjZT11bml2ZXJzZVx1MDAyNnBhZ2U9MSIsInV1aWQiOiJmZDQwNDUyZC0xM2Q2LTQxZDgtYWQ5NS1kNGVmNDRiMDM0N2EiLCJ0aGVtZSI6ImlmcmFtZSIsInAiOiJodHRwczovL3d3dy50b2tvcGVkaWEuY29tL3NlYXJjaD9zdD1wcm9kdWN0XHUwMDI2cT1wb3dlciUyMGJhbmtcdTAwMjZzYz02NVx1MDAyNnNvdXJjZT11bml2ZXJzZVx1MDAyNnBhZ2U9MSJ9'
+        headers = {'User-Agent': user_agent}
+#        htmlText = requests.get(url, headers=headers,proxies=proxies,verify=False).text
+        htmlText = requests.get(url, headers=headers).text
+        htmlText = htmlText.replace('（','').replace('）','')
+#        s = requests.session()
+#        s.keep_alive = False
+        return htmlText
+    
+    except RequestException as e :
+        print (e)
+#    except requests.exceptions.ConnectionError:
+#         r.status_code = "Connection refused"
+def get_msg(htmlText):
+    if type(htmlText) is None:
+        return TypeError
+    else:
+        print('解析网页')
+        load = re.compile(r'<td align="center">(.*?)—(.*?)</td>').findall(htmlText)
+        #print(load)
+        #取网点名称
+        wangdian = re.compile(r'<a href=.*?\d+.html">(.*?)</a>').findall(htmlText)
+        #print(wangdian)
+        #取时效
+        use_time = re.compile(r'<td>(.*?)小时</td>').findall(htmlText)
+        #print(use_time)
+        #取企业名称
+        logistic_name = re.compile(r'<p>(.*?)</p>').findall(htmlText)
+        logistic_name = [x.replace(' ','') for x in logistic_name]
+        #print(logistic_name)
+        #取联系人
+        contact_name = re.compile(r'<td align="center">([\u4E00-\u9FA5]+)</td>').findall(htmlText)
+        #print(contact_name)
+        #取联系人电话
+        contact_phone = re.compile(r'<span class="tel">(.*?)</span></td>').findall(htmlText)
+        #print(contact_phone)
+        #取地址
+        addr3 = re.compile(r'<td>(.*?)</td>').findall(htmlText)
+        address = [x for x in addr3 if '省' in x or '市' in x]
+        #print(address)
+        companyInfo = {'主营线路':load,'网点':wangdian,'时效':use_time,'企业':logistic_name,'联系人':contact_name,'联系人电话':contact_phone,'地址':address}
+        company_data = pd.DataFrame(companyInfo)
+        company_data = company_data.reindex(columns=['主营线路','网点','时效','企业','联系人','联系人电话','地址'])
+        return company_data
+        
+        
+def write_file(data_final,file):
+    if len(data_final)==0:
+        return None
+    else:
+        print('start write excelfile')
+        #filename = '物优物流零担数据测试-福田天河.xlsx'
+        filename = '物优物流零担数据23_%s.xlsx'%file
+        pathfile1 = os.path.join(basePath['attach'],filename)
+        
+        writer = pd.ExcelWriter(pathfile1)
+        data_final.to_excel(writer,sheet_name='明细',index=False)
+        writer.save()
+
+        
+def crawlPage(url):
+    #多个发货到货地址时需要更改 \数据申请
+    print('开始抓取每个页面')
+    #url='http://www.wuyou56.cn/index/company/search_line.html?start=广东省/深圳市/宝安区&end=广东省/广州市/天河区&page='+str(offset)
+    print(url)
+    htmlText=spiderPage(url)
+
+    company_data=get_msg(htmlText)
+    
+    return company_data
+#判断页数，无结果页
+def confirm_page():
+    print('开始确认页数及是否有搜索结果')
+    data = pd.read_excel(r'E:\数据申请\测试2.xlsx')
+    num_list = []
+    for index,rows in data.iterrows():
+        sendres = rows['发货地']
+        receivedres = rows['目的地']
+        url='http://www.wuyou56.cn/index/company/search_line.html?start='+sendres+'&end='+receivedres+'&page=1'
+        user_agent = 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/53.0.2785.104 Safari/537.36 Core/1.53.4295.400'
+        headers = {'User-Agent': user_agent}
+        htmlText = requests.get(url, headers=headers).text
+        num = re.compile(r'<a href=.*?>(\d+)</a></li>').findall(htmlText)
+        use_time = re.compile(r'<td>(.*?)小时</td>').findall(htmlText)
+        if len(num) == 0:
+            page_num = str(len(num))
+        else:
+            page_num =str(max([int(x) for x in num]))
+        msg = sendres+','+page_num+','+receivedres+','+str(len(use_time))
+        num_list.append(msg)
+    p_dict = {'页数':num_list}
+    p_data = pd.DataFrame(p_dict)
+    final_dataframe= pd.DataFrame(p_data['页数'].str.split(',',expand=True))
+    final_dataframe.columns=['发货地','是否多页','目的地','有无查询结果']
+    final_dataframe['是否多页'] = final_dataframe['是否多页'].astype(int)
+    final_dataframe['有无查询结果'] = final_dataframe['有无查询结果'].astype(int)
+    return final_dataframe
+
+def get_urlist(final_dataframe):
+    #final_dataframe2 = pd.read_excel(r'\测试.xlsx')
+    #final_dataframe2 = final_dataframe2[final_dataframe2['是否多页']>0]#多页查询结果
+    #final_dataframe2 = final_dataframe2[(final_dataframe2['是否多页']==0)&(final_dataframe2['有无查询结果']>0)]#只有一页查询结果的
+    #拼接每一对查询结果的每一个url
+    print('拼接每个页面url地址')
+    fin_list = []
+    for index,rows in final_dataframe[final_dataframe['是否多页']>0].iterrows():
+        sendres = rows['发货地']
+        receivedres = rows['目的地']
+        page_num = rows['是否多页']
+        #data_final = pd.DataFrame()
+        url_list = []
+        for i in range(page_num):
+            url_msg = 'http://www.wuyou56.cn/index/company/search_line.html?start='+sendres+'&end='+receivedres+'&page='+str(i+1)
+            url_list.append(url_msg)
+        fin_list.append(url_list)
+    final_url = []
+    for line in fin_list:
+        for urls in line:
+            final_url.append(urls)
+    return final_url
+
+def write_confirm_file(final_dataframe):
+    print('start write excelfile')
+    #filename = '物优物流零担数据测试-福田天河.xlsx'
+    filename = '页数判断结果.xlsx'
+    pathfile1 = os.path.join(basePath['attach'],filename)
+    
+    writer = pd.ExcelWriter(pathfile1)
+    final_dataframe.to_excel(writer,sheet_name='明细',index=False)
+    writer.save()
+                
+if __name__ == "__main__":
+    final_dataframe = confirm_page()
+    #write_confirm_file(final_dataframe)
+    #处理多页的url 并循环抓取每一页
+    final_url=get_urlist(final_dataframe)
+    data = pd.DataFrame()
+    for url in final_url:
+        company_data = crawlPage(url)
+        data = pd.concat([data,company_data])
+        #time.sleep(1)#每抓取一个页面随机休息1到3秒钟
+#    file = '多页'
+#    write_file(data,file)
